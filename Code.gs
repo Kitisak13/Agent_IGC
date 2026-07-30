@@ -3,6 +3,8 @@
  * Website: https://www.igc.int/en/default.aspx
  * 
  * Features:
+ * - Robust Error Handling & Retries (Exponential Backoff)
+ * - Automatic Failure Notifications (MS Teams & Email alerts on error)
  * - Scrapes daily prices for Wheat, Maize, Barley, Soyabeans, Rice
  * - Updates Google Sheets (Consolidated & Group Tabs)
  * - Detects NEW daily price dates
@@ -23,18 +25,43 @@
 // 6. "LAST_PROCESSED_DATE": (Auto-updated) Tracks the latest notified price date
 
 /**
- * Main execution function to scrape IGC market data and handle notifications.
- * Can be run manually or scheduled via Time-Driven Triggers.
+ * Main execution function with Global Error Handling.
  */
 function runScraper() {
   const props = PropertiesService.getScriptProperties();
+  const teamsWebhookUrl = props.getProperty('TEAMS_WEBHOOK_URL');
+  const emailRecipients = props.getProperty('EMAIL_RECIPIENTS');
+
+  try {
+    Logger.log('Starting IGC Market Data Scraper...');
+    executeScraper(props);
+    Logger.log('Scraper execution completed successfully!');
+  } catch (error) {
+    const errorMsg = error.stack || error.toString();
+    Logger.log('❌ CRITICAL ERROR OCCURRED: ' + errorMsg);
+
+    // Send Error Alerts via MS Teams & Email
+    if (teamsWebhookUrl && teamsWebhookUrl.trim() !== '') {
+      sendTeamsErrorAlert(teamsWebhookUrl, errorMsg);
+    }
+    if (emailRecipients && emailRecipients.trim() !== '') {
+      sendEmailErrorAlert(emailRecipients, errorMsg);
+    }
+
+    // Re-throw to record error in Apps Script Executions log
+    throw error;
+  }
+}
+
+/**
+ * Core Scraper Execution Engine
+ */
+function executeScraper(props) {
   const spreadsheetId = props.getProperty('SPREADSHEET_ID');
   const sheetName = props.getProperty('SHEET_NAME') || 'All_Data';
   const teamsWebhookUrl = props.getProperty('TEAMS_WEBHOOK_URL');
   const emailRecipients = props.getProperty('EMAIL_RECIPIENTS');
   const lastProcessedDate = props.getProperty('LAST_PROCESSED_DATE') || '';
-
-  Logger.log('Starting IGC Market Data Scraper...');
 
   // 1. Get or Open Spreadsheet
   let ss;
@@ -53,14 +80,14 @@ function runScraper() {
     }
   }
 
-  // 2. Fetch main page to get ASP.NET WebForms tokens
+  // 2. Fetch main page with Retry logic
   const baseUrl = 'https://www.igc.int/en/default.aspx';
   const initialHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
   };
 
-  const initialResponse = UrlFetchApp.fetch(baseUrl, {
+  const initialResponse = fetchWithRetry(baseUrl, {
     'method': 'get',
     'headers': initialHeaders,
     'muteHttpExceptions': true
@@ -75,7 +102,7 @@ function runScraper() {
   const validation = extractHiddenInput('__EVENTVALIDATION', html);
 
   if (!viewState || !generator || !validation) {
-    throw new Error('Failed to extract ASP.NET WebForms state tokens from IGC website.');
+    throw new Error('Failed to extract ASP.NET WebForms tokens (__VIEWSTATE, __VIEWSTATEGENERATOR, __EVENTVALIDATION) from IGC website.');
   }
 
   const tabs = [
@@ -88,7 +115,7 @@ function runScraper() {
 
   const allFlatData = [];
 
-  // 3. Loop over each commodity group tab
+  // 3. Loop over each commodity group tab with Retries
   tabs.forEach(tab => {
     Logger.log('Scraping group: ' + tab.name + '...');
 
@@ -108,7 +135,7 @@ function runScraper() {
       postHeaders['Cookie'] = cookies;
     }
 
-    const postResponse = UrlFetchApp.fetch(baseUrl, {
+    const postResponse = fetchWithRetry(baseUrl, {
       'method': 'post',
       'headers': postHeaders,
       'payload': payload,
@@ -117,16 +144,25 @@ function runScraper() {
 
     const postHtml = postResponse.getContentText();
     const groupData = parseTableData(postHtml, tab.name);
+
+    if (groupData.length === 0) {
+      Logger.log('⚠️ Warning: No price data parsed for commodity group: ' + tab.name);
+    }
+
     allFlatData.push(...groupData);
   });
 
-  Logger.log('Total records scraped: ' + allFlatData.length);
+  if (allFlatData.length === 0) {
+    throw new Error('Scraper completed but 0 total records were parsed across all commodity groups.');
+  }
 
-  // 4. Update Google Sheets (Consolidated Long Format & Group Sheets)
+  Logger.log('Total records scraped successfully: ' + allFlatData.length);
+
+  // 4. Update Google Sheets
   updateConsolidatedSheet(ss, sheetName, allFlatData);
   updateGroupSheets(ss, allFlatData);
 
-  // 5. Detect if there is a NEW DATE
+  // 5. Detect NEW DATE
   const latestDateIso = getLatestDateIso(allFlatData);
   const latestDateDisplay = getLatestDateDisplay(allFlatData);
   Logger.log('Latest Date in Scraped Data: ' + latestDateDisplay + ' (ISO: ' + latestDateIso + ')');
@@ -142,33 +178,107 @@ function runScraper() {
     const csvFileUrl = csvFile.getUrl();
     Logger.log('CSV file created in Drive: ' + csvFileUrl);
 
-    // B. Send MS Teams Notification with CSV link
+    // B. Send MS Teams Notification
     if (teamsWebhookUrl && teamsWebhookUrl.trim() !== '') {
       sendMSTeamsNotification(teamsWebhookUrl, latestDateDisplay, allFlatData, csvFileUrl, ss.getUrl());
-    } else {
-      Logger.log('Skipping MS Teams: TEAMS_WEBHOOK_URL is not configured.');
     }
 
-    // C. Send Email to 3 recipients with attached CSV file
+    // C. Send Email to Recipients
     if (emailRecipients && emailRecipients.trim() !== '') {
       sendEmailWithAttachment(emailRecipients, latestDateDisplay, csvFile, ss.getUrl());
-    } else {
-      Logger.log('Skipping Email: EMAIL_RECIPIENTS is not configured.');
     }
 
-    // D. Update Last Processed Date in Script Properties
+    // D. Update Last Processed Date
     props.setProperty('LAST_PROCESSED_DATE', latestDateIso);
     Logger.log('Updated LAST_PROCESSED_DATE property to: ' + latestDateIso);
 
   } else {
     Logger.log('No new date detected. Current latest date (' + latestDateDisplay + ') already processed. No notifications sent.');
   }
-
-  Logger.log('Scraper finished successfully!');
 }
 
 /**
- * Converts date strings like "29/07/2026" to ISO "2026-07-29" for accurate comparison
+ * Robust HTTP Fetcher with Exponential Backoff Retry Logic
+ */
+function fetchWithRetry(url, options, maxRetries = 3) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    attempt++;
+    try {
+      const response = UrlFetchApp.fetch(url, options);
+      const statusCode = response.getResponseCode();
+
+      if (statusCode === 200) {
+        return response;
+      }
+
+      Logger.log(`[Attempt ${attempt}/${maxRetries}] HTTP Status ${statusCode} received from ${url}`);
+      if (attempt >= maxRetries) {
+        throw new Error(`HTTP Request failed with status code ${statusCode} after ${maxRetries} attempts.`);
+      }
+    } catch (e) {
+      Logger.log(`[Attempt ${attempt}/${maxRetries}] Fetch exception: ${e.message}`);
+      if (attempt >= maxRetries) {
+        throw new Error(`Network/Fetch error after ${maxRetries} attempts: ${e.message}`);
+      }
+    }
+
+    // Exponential Backoff Wait (2s, 4s, 8s...)
+    const sleepMs = Math.pow(2, attempt) * 1000;
+    Logger.log(`Waiting ${sleepMs / 1000}s before retrying...`);
+    Utilities.sleep(sleepMs);
+  }
+}
+
+/**
+ * Sends Error Alert to MS Teams Channel
+ */
+function sendTeamsErrorAlert(webhookUrl, errorMsg) {
+  try {
+    const cardPayload = {
+      "@type": "MessageCard",
+      "@context": "http://schema.org/extensions",
+      "themeColor": "D93025", // Red error color
+      "summary": "❌ IGC Scraper System Error Alert",
+      "sections": [{
+        "activityTitle": "❌ IGC Market Scraper Execution Failed",
+        "activitySubtitle": `Time: ${new Date().toLocaleString()}`,
+        "text": `**An error occurred while running the automated IGC scraper:**\n\`\`\`\n${errorMsg.substring(0, 1000)}\n\`\`\``,
+        "markdown": true
+      }]
+    };
+
+    UrlFetchApp.fetch(webhookUrl.trim(), {
+      'method': 'post',
+      'contentType': 'application/json',
+      'payload': JSON.stringify(cardPayload),
+      'muteHttpExceptions': true
+    });
+  } catch (e) {
+    Logger.log('Failed to send Teams Error Alert: ' + e.message);
+  }
+}
+
+/**
+ * Sends Error Alert Email to Recipients
+ */
+function sendEmailErrorAlert(recipientsStr, errorMsg) {
+  try {
+    const subject = `[Alert] IGC Market Scraper Execution Error`;
+    const body = `Dear Admin/Team,\n\nAn error occurred while executing the IGC Market Scraper System:\n\nError Details:\n${errorMsg}\n\nPlease check the Google Apps Script Executions log for details.\n\nSystem Timestamp: ${new Date().toString()}`;
+
+    MailApp.sendEmail({
+      to: recipientsStr.trim(),
+      subject: subject,
+      body: body
+    });
+  } catch (e) {
+    Logger.log('Failed to send Email Error Alert: ' + e.message);
+  }
+}
+
+/**
+ * Converts date strings like "29/07/2026" to ISO "2026-07-29"
  */
 function parseDateToIso(dateStr) {
   if (!dateStr) return '';
@@ -182,9 +292,6 @@ function parseDateToIso(dateStr) {
   return dateStr;
 }
 
-/**
- * Finds the latest date in ISO format (YYYY-MM-DD)
- */
 function getLatestDateIso(allData) {
   let maxIso = '';
   allData.forEach(item => {
@@ -194,9 +301,6 @@ function getLatestDateIso(allData) {
   return maxIso;
 }
 
-/**
- * Finds the display date corresponding to the latest ISO date
- */
 function getLatestDateDisplay(allData) {
   const maxIso = getLatestDateIso(allData);
   for (let item of allData) {
@@ -207,9 +311,6 @@ function getLatestDateDisplay(allData) {
   return maxIso;
 }
 
-/**
- * Creates CSV File in Google Drive and sets view permission with link
- */
 function createCsvFileInDrive(allFlatData, dateIso) {
   let csvContent = 'Group,SubCommodity,Date,Price_USD,Updated_At\n';
   const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
@@ -236,7 +337,6 @@ function createCsvFileInDrive(allFlatData, dateIso) {
     file = DriveApp.createFile(blob);
   }
 
-  // Allow anyone with link to view file for easy Teams access
   try {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   } catch (e) {
@@ -246,13 +346,9 @@ function createCsvFileInDrive(allFlatData, dateIso) {
   return file;
 }
 
-/**
- * Sends notification card to MS Teams Channel via Webhook
- */
 function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheetUrl) {
   Logger.log('Sending MS Teams Notification...');
 
-  // Group latest prices for summary
   const latestIso = parseDateToIso(dateDisplay);
   const latestRecords = allData.filter(i => parseDateToIso(i.date) === latestIso);
 
@@ -262,7 +358,6 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
     summaryText += `• **[${rec.group}]** ${rec.subCommodity}: **${priceStr}**\n`;
   });
 
-  // MS Teams MessageCard payload
   const cardPayload = {
     "@type": "MessageCard",
     "@context": "http://schema.org/extensions",
@@ -298,9 +393,6 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
   Logger.log('MS Teams Webhook Response: ' + response.getResponseCode());
 }
 
-/**
- * Sends Email with attached CSV file to recipients
- */
 function sendEmailWithAttachment(recipientsStr, dateDisplay, csvFile, sheetUrl) {
   Logger.log('Sending Email with CSV attachment to: ' + recipientsStr);
 
@@ -336,9 +428,6 @@ function sendEmailWithAttachment(recipientsStr, dateDisplay, csvFile, sheetUrl) 
   Logger.log('Email sent successfully!');
 }
 
-/**
- * Parses <table id="GridViewHiddenPrices"> using Regex
- */
 function parseTableData(html, groupName) {
   const tableRegex = /<table[^>]*id="GridViewHiddenPrices"[^>]*>([\s\S]*?)<\/table>/i;
   const tableMatch = html.match(tableRegex);
@@ -394,9 +483,6 @@ function parseTableData(html, groupName) {
   return rows;
 }
 
-/**
- * Updates consolidated sheet (Group, SubCommodity, Date, Price_USD)
- */
 function updateConsolidatedSheet(ss, sheetName, dataList) {
   let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -435,9 +521,6 @@ function updateConsolidatedSheet(ss, sheetName, dataList) {
   sheet.autoResizeColumns(1, 5);
 }
 
-/**
- * Updates individual tabs for each commodity group
- */
 function updateGroupSheets(ss, dataList) {
   const grouped = {};
   dataList.forEach(item => {
@@ -510,9 +593,6 @@ function stripHtmlTags(str) {
   return str.replace(/<[^>]+>/g, '').trim();
 }
 
-/**
- * Helper to set up a daily automated trigger (Runs every day at 8:00 AM)
- */
 function setupDailyTrigger() {
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => {
@@ -528,24 +608,4 @@ function setupDailyTrigger() {
     .create();
 
   Logger.log('Daily trigger created for runScraper at 8:00 AM!');
-}
-
-/**
- * Helper to test MS Teams Webhook
- */
-function testMSTeamsWebhook() {
-  const props = PropertiesService.getScriptProperties();
-  const webhookUrl = props.getProperty('TEAMS_WEBHOOK_URL');
-  if (!webhookUrl) {
-    Logger.log('Please set TEAMS_WEBHOOK_URL in Script Properties first.');
-    return;
-  }
-  
-  const dummyData = [
-    { group: 'Rice', subCommodity: 'Thailand 5% Broken, Bangkok', date: '30/07/2026', price: 455 },
-    { group: 'Rice', subCommodity: 'Vietnam 5% Broken, Ho Chi Minh', date: '30/07/2026', price: 435 }
-  ];
-  
-  sendMSTeamsNotification(webhookUrl, '30/07/2026', dummyData, 'https://drive.google.com', 'https://docs.google.com');
-  Logger.log('Test notification sent to MS Teams!');
 }

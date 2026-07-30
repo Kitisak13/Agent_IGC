@@ -13,6 +13,9 @@ Automated Web Scraping and Monitoring System for Agricultural Commodity Prices (
   - **Barley** (EU Feed Rouen)
   - **Soyabeans** (Brazil Paranagua, US 2Y Gulf)
   - **Rice** (Thailand 5% Broken Bangkok, Vietnam 5% Broken Ho Chi Minh)
+- 🛡️ **Robust Error Handling & Auto-Retries**:
+  - **Exponential Backoff Retry Engine**: Retries network requests up to 3 times on connection drops or HTTP 5xx errors.
+  - **Failure Alert System**: Automatically sends Error Alert cards to MS Teams Channel and Email if the scraper fails or site structure changes.
 - 🤖 **Google Apps Script (`Code.gs`)**:
   - Auto-updates Google Sheets (Consolidated Long-Format & Tabbed Pivot Sheets)
   - **New Date Detection**: Automatically triggers alerts ONLY when new daily market prices are published
@@ -31,9 +34,6 @@ Automated Web Scraping and Monitoring System for Agricultural Commodity Prices (
 .
 ├── Code.gs             # Google Apps Script code for Google Sheets & Notifications
 ├── igc_scraper.py      # Python modular scraper script (JSON/CSV/Excel exporter)
-├── igc_market_data.json # Sample scraped JSON output
-├── igc_market_data.csv  # Sample scraped CSV output
-├── igc_market_data.xlsx # Sample scraped Excel output
 └── README.md           # Documentation
 ```
 
@@ -67,7 +67,7 @@ pip install requests beautifulsoup4 pandas openpyxl
 python igc_scraper.py
 ```
 
-Outputs:
+Outputs (Ignored by Git for security/privacy):
 - `igc_market_data.json`
 - `igc_market_data.csv`
 - `igc_market_data.xlsx`

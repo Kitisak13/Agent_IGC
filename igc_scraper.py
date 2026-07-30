@@ -2,12 +2,10 @@
 IGC Market at a Glance Web Scraper
 Website: https://www.igc.int/en/default.aspx
 
-Scrapes daily commodity price graph data for:
-- Wheat
-- Maize
-- Barley
-- Soyabeans
-- Rice
+Features:
+- Robust Error Handling & HTTP Retries (Exponential Backoff)
+- Scrapes daily commodity price graph data for Wheat, Maize, Barley, Soyabeans, Rice
+- Exports to JSON, CSV, and multi-sheet Excel
 
 Author: Antigravity AI
 """
@@ -18,6 +16,8 @@ import json
 import logging
 import argparse
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import pandas as pd
 
@@ -39,8 +39,20 @@ class IGCScraper:
         ("Rice", "RicePriceButton")
     ]
 
-    def __init__(self):
+    def __init__(self, max_retries: int = 3, backoff_factor: float = 1.0):
         self.session = requests.Session()
+        
+        # Configure Retries for Network Resilience
+        retries = Retry(
+            total=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=[500, 502, 503, 504],
+            raise_on_status=False
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -58,10 +70,14 @@ class IGCScraper:
         return data
 
     def scrape_all(self) -> dict:
-        """Scrape market data across all 5 commodity groups."""
+        """Scrape market data across all 5 commodity groups with Error Handling."""
         logging.info(f"Fetching main page: {self.BASE_URL}")
-        res = self.session.get(self.BASE_URL)
-        res.raise_for_status()
+        try:
+            res = self.session.get(self.BASE_URL, timeout=30)
+            res.raise_for_status()
+        except Exception as e:
+            logging.error(f"Failed to fetch IGC main page: {e}")
+            raise RuntimeError(f"Network error while connecting to IGC website: {e}")
 
         soup = BeautifulSoup(res.text, 'html.parser')
         result_data = {}
@@ -69,59 +85,66 @@ class IGCScraper:
         for group_name, btn_id in self.TABS:
             logging.info(f"Scraping group: {group_name} (Triggering {btn_id})...")
             
-            # Prepare ASP.NET postback parameters
-            form_data = self._extract_hidden_inputs(soup)
-            form_data['__EVENTTARGET'] = btn_id
-            form_data['__EVENTARGUMENT'] = ''
+            try:
+                # Prepare ASP.NET postback parameters
+                form_data = self._extract_hidden_inputs(soup)
+                form_data['__EVENTTARGET'] = btn_id
+                form_data['__EVENTARGUMENT'] = ''
 
-            # Execute PostBack
-            res_post = self.session.post(self.BASE_URL, data=form_data)
-            res_post.raise_for_status()
+                # Execute PostBack with Timeout and Error Handling
+                res_post = self.session.post(self.BASE_URL, data=form_data, timeout=30)
+                res_post.raise_for_status()
 
-            soup = BeautifulSoup(res_post.text, 'html.parser')
-            table = soup.find('table', id='GridViewHiddenPrices')
+                soup = BeautifulSoup(res_post.text, 'html.parser')
+                table = soup.find('table', id='GridViewHiddenPrices')
 
-            if not table:
-                logging.warning(f"Could not find GridViewHiddenPrices for group '{group_name}'")
-                continue
+                if not table:
+                    logging.warning(f"Could not find GridViewHiddenPrices table for group '{group_name}'")
+                    continue
 
-            headers = [th.get_text(strip=True) for th in table.find_all('th')]
-            rows = []
-            for tr in table.find_all('tr')[1:]:
-                cols = [td.get_text(strip=True) for td in tr.find_all('td')]
-                if cols:
-                    rows.append(cols)
+                headers = [th.get_text(strip=True) for th in table.find_all('th')]
+                rows = []
+                for tr in table.find_all('tr')[1:]:
+                    cols = [td.get_text(strip=True) for td in tr.find_all('td')]
+                    if cols:
+                        rows.append(cols)
 
-            sub_commodities = headers[1:]
-            daily_records = []
+                sub_commodities = headers[1:]
+                daily_records = []
 
-            for row in rows:
-                date_str = row[0]
-                prices = {}
-                for idx, comm in enumerate(sub_commodities):
-                    val_str = row[idx + 1] if idx + 1 < len(row) else None
-                    try:
-                        val_num = float(val_str) if val_str and val_str != '-' else None
-                    except (ValueError, TypeError):
-                        val_num = val_str
-                    prices[comm] = val_num
+                for row in rows:
+                    date_str = row[0]
+                    prices = {}
+                    for idx, comm in enumerate(sub_commodities):
+                        val_str = row[idx + 1] if idx + 1 < len(row) else None
+                        try:
+                            val_num = float(val_str) if val_str and val_str != '-' else None
+                        except (ValueError, TypeError):
+                            val_num = val_str
+                        prices[comm] = val_num
 
-                daily_records.append({
-                    "date": date_str,
-                    "prices": prices
-                })
+                    daily_records.append({
+                        "date": date_str,
+                        "prices": prices
+                    })
 
-            result_data[group_name] = {
-                "sub_commodities": sub_commodities,
-                "daily_prices": daily_records
-            }
-            logging.info(f"Successfully scraped {len(daily_records)} daily records for {group_name} ({len(sub_commodities)} sub-commodities)")
+                result_data[group_name] = {
+                    "sub_commodities": sub_commodities,
+                    "daily_prices": daily_records
+                }
+                logging.info(f"Successfully scraped {len(daily_records)} daily records for {group_name} ({len(sub_commodities)} sub-commodities)")
+
+            except Exception as e:
+                logging.error(f"Error scraping group {group_name}: {e}")
+                # Continue scraping other groups even if one group fails
+
+        if not result_data:
+            raise RuntimeError("Scraper completed but 0 commodity groups were scraped successfully.")
 
         return result_data
 
     @staticmethod
     def to_flat_dataframe(scraped_data: dict) -> pd.DataFrame:
-        """Convert scraped data to a clean long-format DataFrame."""
         flat_rows = []
         for group, info in scraped_data.items():
             for record in info["daily_prices"]:
@@ -149,10 +172,7 @@ class IGCScraper:
     @staticmethod
     def save_to_excel(scraped_data: dict, df_flat: pd.DataFrame, filepath: str = "igc_market_data.xlsx"):
         with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
-            # Summary flat sheet
             df_flat.to_excel(writer, sheet_name="All_Data", index=False)
-            
-            # Individual group sheets (pivoted by sub-commodity)
             for group, info in scraped_data.items():
                 group_rows = []
                 for record in info["daily_prices"]:
@@ -161,7 +181,6 @@ class IGCScraper:
                     group_rows.append(row)
                 df_group = pd.DataFrame(group_rows)
                 df_group.to_excel(writer, sheet_name=group, index=False)
-                
         logging.info(f"Saved Excel data workbook to {filepath}")
 
 
@@ -172,16 +191,19 @@ def main():
     parser.add_argument("--excel", default="igc_market_data.xlsx", help="Path for Excel output")
     args = parser.parse_args()
 
-    scraper = IGCScraper()
-    data = scraper.scrape_all()
+    try:
+        scraper = IGCScraper()
+        data = scraper.scrape_all()
 
-    # Save output formats
-    scraper.save_to_json(data, args.json)
-    df_flat = scraper.to_flat_dataframe(data)
-    scraper.save_to_csv(df_flat, args.csv)
-    scraper.save_to_excel(data, df_flat, args.excel)
+        scraper.save_to_json(data, args.json)
+        df_flat = scraper.to_flat_dataframe(data)
+        scraper.save_to_csv(df_flat, args.csv)
+        scraper.save_to_excel(data, df_flat, args.excel)
 
-    print("\nScraping Completed Successfully!")
+        print("\nScraping Completed Successfully!")
+    except Exception as e:
+        logging.critical(f"Scraper program terminated with error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
