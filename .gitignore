@@ -1,3 +1,7 @@
+# Data files
+*.csv
+*.xlsx
+
 # Temporary and cache files
 __pycache__/
 *.pyc
