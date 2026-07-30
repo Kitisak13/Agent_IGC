@@ -3,14 +3,15 @@
  * Website: https://www.igc.int/en/default.aspx
  * 
  * Features:
- * - Beautifully Organized MS Teams Notification (Grouped by Commodity with Facts Table)
+ * - MS Teams Notification (Clean English "Commodity Group: XXX" without icons)
+ * - Beautiful HTML Email Table Layout (Grouped prices without icons)
  * - Single Persistent Master CSV Database File in Google Drive
  * - Robust Error Handling & Retries (Exponential Backoff)
  * - Automatic Failure Notifications (MS Teams & Email alerts on error)
  * - Scrapes daily prices for Wheat, Maize, Barley, Soyabeans, Rice
  * - Updates Google Sheets (Consolidated Database & Group Tabs)
  * - Detects NEW daily price dates
- * - Sends Email to 3 recipients with attached CSV file
+ * - Sends Email to recipients with attached CSV file
  * 
  * Author: Antigravity AI
  */
@@ -177,14 +178,14 @@ function executeScraper(props) {
     const csvFileUrl = csvFile.getUrl();
     Logger.log('Master CSV File updated in Drive: ' + csvFileUrl);
 
-    // B. Send Beautifully Grouped MS Teams Notification
+    // B. Send Clean MS Teams Notification (English "Commodity Group: XXX", No Icons)
     if (teamsWebhookUrl && teamsWebhookUrl.trim() !== '') {
       sendMSTeamsNotification(teamsWebhookUrl, latestDateDisplay, allFlatData, csvFileUrl, ss.getUrl());
     }
 
-    // C. Send Email to Recipients with attached CSV
+    // C. Send Email to Recipients with HTML Table & CSV Attachment
     if (emailRecipients && emailRecipients.trim() !== '') {
-      sendEmailWithAttachment(emailRecipients, latestDateDisplay, csvFile, ss.getUrl());
+      sendEmailWithAttachment(emailRecipients, latestDateDisplay, allFlatData, csvFile, ss.getUrl());
     }
 
     // D. Update Last Processed Date
@@ -244,7 +245,7 @@ function updateMasterCsvFileInDrive(ss, sheetName) {
 }
 
 /**
- * Sends Beautifully Grouped MS Teams Notification Card
+ * Sends Clean MS Teams Notification Card (No icons, English headers)
  */
 function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheetUrl) {
   Logger.log('Sending MS Teams Notification...');
@@ -259,26 +260,17 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
     grouped[rec.group].push(rec);
   });
 
-  const icons = {
-    'Wheat': '🌾',
-    'Maize': '🌽',
-    'Barley': '🌾',
-    'Soyabeans': '🫘',
-    'Rice': '🍚'
-  };
-
   const sections = [
     {
       "activityTitle": "📢 IGC Market Daily Price Update",
-      "activitySubtitle": `📅 ข้อมูลประจำวันที่: ${dateDisplay}`,
-      "text": `ระบบได้ทำการดึงและอัปเดตราคาสินค้าเกษตรประจำวันที่ **${dateDisplay}** เข้าสู่ฐานข้อมูลเรียบร้อยแล้ว`,
+      "activitySubtitle": `Date: ${dateDisplay}`,
+      "text": `Daily commodity market prices for **${dateDisplay}** have been updated:`,
       "markdown": true
     }
   ];
 
-  // Create organized Facts Section for each commodity group
+  // Add a section with English Header "Commodity Group: XXX" and no icons
   Object.keys(grouped).forEach(groupName => {
-    const icon = icons[groupName] || '🌾';
     const items = grouped[groupName];
     
     const facts = items.map(item => {
@@ -290,7 +282,7 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
     });
 
     sections.push({
-      "title": `${icon} กลุ่มสินค้า: ${groupName}`,
+      "title": `Commodity Group: ${groupName}`,
       "facts": facts,
       "markdown": true
     });
@@ -305,12 +297,12 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
     "potentialAction": [
       {
         "@type": "OpenUri",
-        "name": "📊 เปิด Google Sheet",
+        "name": "📊 Open Google Sheet",
         "targets": [{ "os": "default", "uri": sheetUrl }]
       },
       {
         "@type": "OpenUri",
-        "name": "📥 เปิด/ดาวน์โหลด Master CSV",
+        "name": "📥 Open/Download Master CSV",
         "targets": [{ "os": "default", "uri": csvUrl }]
       }
     ]
@@ -327,10 +319,25 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
 }
 
 /**
- * Sends Email with attached CSV file to recipients
+ * Sends Email with formatted HTML Table & attached CSV file
  */
-function sendEmailWithAttachment(recipientsStr, dateDisplay, csvFile, sheetUrl) {
+function sendEmailWithAttachment(recipientsStr, dateDisplay, allData, csvFile, sheetUrl) {
   Logger.log('Sending Email with CSV attachment to: ' + recipientsStr);
+
+  const latestIso = parseDateToIso(dateDisplay);
+  const latestRecords = allData.filter(i => parseDateToIso(i.date) === latestIso);
+
+  // Build HTML Table Rows
+  let tableRowsHtml = '';
+  latestRecords.forEach((rec, idx) => {
+    const bg = idx % 2 === 0 ? '#ffffff' : '#f9f9f9';
+    const priceStr = rec.price !== null ? `$${rec.price}` : 'N/A';
+    tableRowsHtml += `<tr style="background-color: ${bg};">` +
+      `<td style="padding: 8px 12px; border: 1px solid #ddd; font-weight: bold;">${rec.group}</td>` +
+      `<td style="padding: 8px 12px; border: 1px solid #ddd;">${rec.subCommodity}</td>` +
+      `<td style="padding: 8px 12px; border: 1px solid #ddd; text-align: right; font-weight: bold; color: #1b5e20;">${priceStr}</td>` +
+      `</tr>`;
+  });
 
   const subject = `[IGC Market Update] New Commodity Prices Alert - ${dateDisplay}`;
   
@@ -342,14 +349,29 @@ function sendEmailWithAttachment(recipientsStr, dateDisplay, csvFile, sheetUrl) 
     `Best regards,\n` +
     `Automated IGC Market Scraper System`;
 
-  const htmlBody = `<div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">` +
-    `<h2 style="color: #1b5e20;">🌾 IGC Market Daily Price Update</h2>` +
-    `<p>New daily commodity prices for <strong>${dateDisplay}</strong> have been published.</p>` +
-    `<div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">` +
+  const htmlBody = `<div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; max-width: 650px;">` +
+    `<h2 style="color: #1b5e20; border-bottom: 2px solid #1b5e20; padding-bottom: 8px;">🌾 IGC Market Daily Price Update</h2>` +
+    `<p>New daily commodity prices for <strong>${dateDisplay}</strong> have been published and updated.</p>` +
+    
+    `<table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px;">` +
+    `<thead>` +
+    `<tr style="background-color: #1b5e20; color: #ffffff; text-align: left;">` +
+    `<th style="padding: 10px 12px; border: 1px solid #1b5e20;">Commodity Group</th>` +
+    `<th style="padding: 10px 12px; border: 1px solid #1b5e20;">Sub-Commodity</th>` +
+    `<th style="padding: 10px 12px; border: 1px solid #1b5e20; text-align: right;">Price (US$/ton)</th>` +
+    `</tr>` +
+    `</thead>` +
+    `<tbody>` +
+    `${tableRowsHtml}` +
+    `</tbody>` +
+    `</table>` +
+
+    `<div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #1b5e20;">` +
     `<p style="margin: 5px 0;">📁 <strong>Attached File:</strong> ${csvFile.getName()}</p>` +
     `<p style="margin: 5px 0;">🔗 <a href="${csvFile.getUrl()}" target="_blank" style="color: #1a73e8; font-weight: bold;">Download / Open Master CSV from Google Drive</a></p>` +
     `<p style="margin: 5px 0;">📊 <a href="${sheetUrl}" target="_blank" style="color: #1a73e8; font-weight: bold;">Open Live Google Sheet</a></p>` +
     `</div>` +
+
     `<p style="font-size: 12px; color: #777;">This is an automated notification from IGC Market Scraper System.</p>` +
     `</div>`;
 
