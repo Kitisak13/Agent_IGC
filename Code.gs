@@ -3,14 +3,14 @@
  * Website: https://www.igc.int/en/default.aspx
  * 
  * Features:
+ * - Beautifully Organized MS Teams Notification (Grouped by Commodity with Facts Table)
  * - Single Persistent Master CSV Database File in Google Drive
- * - Clean & Elegant MS Teams Notification Card (No cluttered list, with direct links)
  * - Robust Error Handling & Retries (Exponential Backoff)
  * - Automatic Failure Notifications (MS Teams & Email alerts on error)
  * - Scrapes daily prices for Wheat, Maize, Barley, Soyabeans, Rice
  * - Updates Google Sheets (Consolidated Database & Group Tabs)
  * - Detects NEW daily price dates
- * - Sends Email with attached CSV file
+ * - Sends Email to 3 recipients with attached CSV file
  * 
  * Author: Antigravity AI
  */
@@ -41,7 +41,6 @@ function runScraper() {
     const errorMsg = error.stack || error.toString();
     Logger.log('❌ CRITICAL ERROR OCCURRED: ' + errorMsg);
 
-    // Send Error Alerts via MS Teams & Email
     if (teamsWebhookUrl && teamsWebhookUrl.trim() !== '') {
       sendTeamsErrorAlert(teamsWebhookUrl, errorMsg);
     }
@@ -178,9 +177,9 @@ function executeScraper(props) {
     const csvFileUrl = csvFile.getUrl();
     Logger.log('Master CSV File updated in Drive: ' + csvFileUrl);
 
-    // B. Send Clean MS Teams Notification (Only Clean Message + Links, No Cluttered Items)
+    // B. Send Beautifully Grouped MS Teams Notification
     if (teamsWebhookUrl && teamsWebhookUrl.trim() !== '') {
-      sendMSTeamsNotification(teamsWebhookUrl, latestDateDisplay, csvFileUrl, ss.getUrl());
+      sendMSTeamsNotification(teamsWebhookUrl, latestDateDisplay, allFlatData, csvFileUrl, ss.getUrl());
     }
 
     // C. Send Email to Recipients with attached CSV
@@ -199,7 +198,6 @@ function executeScraper(props) {
 
 /**
  * Updates or Creates a Single Master CSV Database File in Google Drive.
- * Keeps full historical database in a single permanent CSV file link.
  */
 function updateMasterCsvFileInDrive(ss, sheetName) {
   const sheet = ss.getSheetByName(sheetName);
@@ -227,7 +225,6 @@ function updateMasterCsvFileInDrive(ss, sheetName) {
     targetFolder = DriveApp.getRootFolder();
   }
 
-  // Look for existing Master CSV file to overwrite content instead of creating duplicate files
   const existingFiles = targetFolder.getFilesByName(fileName);
   let file;
   if (existingFiles.hasNext()) {
@@ -247,22 +244,64 @@ function updateMasterCsvFileInDrive(ss, sheetName) {
 }
 
 /**
- * Sends Clean & Elegant MS Teams Notification Card
+ * Sends Beautifully Grouped MS Teams Notification Card
  */
-function sendMSTeamsNotification(webhookUrl, dateDisplay, csvUrl, sheetUrl) {
+function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheetUrl) {
   Logger.log('Sending MS Teams Notification...');
+
+  const latestIso = parseDateToIso(dateDisplay);
+  const latestRecords = allData.filter(i => parseDateToIso(i.date) === latestIso);
+
+  // Group latest records by Group Name
+  const grouped = {};
+  latestRecords.forEach(rec => {
+    if (!grouped[rec.group]) grouped[rec.group] = [];
+    grouped[rec.group].push(rec);
+  });
+
+  const icons = {
+    'Wheat': '🌾',
+    'Maize': '🌽',
+    'Barley': '🌾',
+    'Soyabeans': '🫘',
+    'Rice': '🍚'
+  };
+
+  const sections = [
+    {
+      "activityTitle": "📢 IGC Market Daily Price Update",
+      "activitySubtitle": `📅 ข้อมูลประจำวันที่: ${dateDisplay}`,
+      "text": `ระบบได้ทำการดึงและอัปเดตราคาสินค้าเกษตรประจำวันที่ **${dateDisplay}** เข้าสู่ฐานข้อมูลเรียบร้อยแล้ว`,
+      "markdown": true
+    }
+  ];
+
+  // Create organized Facts Section for each commodity group
+  Object.keys(grouped).forEach(groupName => {
+    const icon = icons[groupName] || '🌾';
+    const items = grouped[groupName];
+    
+    const facts = items.map(item => {
+      const priceStr = item.price !== null ? `$${item.price}` : 'N/A';
+      return {
+        "name": item.subCommodity,
+        "value": `**${priceStr}**`
+      };
+    });
+
+    sections.push({
+      "title": `${icon} กลุ่มสินค้า: ${groupName}`,
+      "facts": facts,
+      "markdown": true
+    });
+  });
 
   const cardPayload = {
     "@type": "MessageCard",
     "@context": "http://schema.org/extensions",
     "themeColor": "0076D7",
     "summary": `IGC Market Price Update (${dateDisplay})`,
-    "sections": [{
-      "activityTitle": "📢 แจ้งเตือน: อัปเดตราคาสินค้าเกษตร IGC",
-      "activitySubtitle": `ข้อมูลอัปเดตประจำวันที่: ${dateDisplay}`,
-      "text": `ระบบได้ทำการดึงข้อมูลและอัปเดตราคาสินค้าเกษตรประจำวันที่ **${dateDisplay}** เข้าสู่ฐานข้อมูลเรียบร้อยแล้ว\n\nท่านสามารถกดปุ่มด้านล่างเพื่อเข้าดูรายละเอียดราคาสินค้าทั้งหมดใน **Google Sheet** หรือเปิดดูไฟล์ **Master CSV** ได้ทันทีครับ`,
-      "markdown": true
-    }],
+    "sections": sections,
     "potentialAction": [
       {
         "@type": "OpenUri",
@@ -271,7 +310,7 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, csvUrl, sheetUrl) {
       },
       {
         "@type": "OpenUri",
-        "name": "📥 เปิด/ดาวน์โหลดไฟล์ Master CSV",
+        "name": "📥 เปิด/ดาวน์โหลด Master CSV",
         "targets": [{ "os": "default", "uri": csvUrl }]
       }
     ]
