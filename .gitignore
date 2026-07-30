@@ -1,0 +1,6 @@
+# Temporary and cache files
+__pycache__/
+*.pyc
+~$*.xlsx
+.DS_Store
+*.log

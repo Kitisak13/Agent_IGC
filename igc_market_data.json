@@ -1,0 +1,392 @@
+{
+  "Wheat": {
+    "sub_commodities": [
+      "EU (France) Grade 1, Rouen",
+      "US HRW (11.5%), Gulf",
+      "US SRW, Gulf"
+    ],
+    "daily_prices": [
+      {
+        "date": "29/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 260.0,
+          "US HRW (11.5%), Gulf": 320.0,
+          "US SRW, Gulf": 272.0
+        }
+      },
+      {
+        "date": "28/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 261.0,
+          "US HRW (11.5%), Gulf": 320.0,
+          "US SRW, Gulf": 273.0
+        }
+      },
+      {
+        "date": "27/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 268.0,
+          "US HRW (11.5%), Gulf": 321.0,
+          "US SRW, Gulf": 272.0
+        }
+      },
+      {
+        "date": "24/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 274.0,
+          "US HRW (11.5%), Gulf": 327.0,
+          "US SRW, Gulf": 279.0
+        }
+      },
+      {
+        "date": "23/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 276.0,
+          "US HRW (11.5%), Gulf": 332.0,
+          "US SRW, Gulf": 285.0
+        }
+      },
+      {
+        "date": "22/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 279.0,
+          "US HRW (11.5%), Gulf": 334.0,
+          "US SRW, Gulf": 289.0
+        }
+      },
+      {
+        "date": "21/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 269.0,
+          "US HRW (11.5%), Gulf": 323.0,
+          "US SRW, Gulf": 279.0
+        }
+      },
+      {
+        "date": "20/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 270.0,
+          "US HRW (11.5%), Gulf": 319.0,
+          "US SRW, Gulf": 277.0
+        }
+      },
+      {
+        "date": "17/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 265.0,
+          "US HRW (11.5%), Gulf": 322.0,
+          "US SRW, Gulf": 278.0
+        }
+      },
+      {
+        "date": "16/07/2026",
+        "prices": {
+          "EU (France) Grade 1, Rouen": 261.0,
+          "US HRW (11.5%), Gulf": 317.0,
+          "US SRW, Gulf": 275.0
+        }
+      }
+    ]
+  },
+  "Maize": {
+    "sub_commodities": [
+      "Brazil, Paranagua",
+      "US 2YC PNW"
+    ],
+    "daily_prices": [
+      {
+        "date": "29/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 224.0,
+          "US 2YC PNW": 232.0
+        }
+      },
+      {
+        "date": "28/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 228.0,
+          "US 2YC PNW": 239.0
+        }
+      },
+      {
+        "date": "27/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 225.0,
+          "US 2YC PNW": 236.0
+        }
+      },
+      {
+        "date": "24/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 230.0,
+          "US 2YC PNW": 241.0
+        }
+      },
+      {
+        "date": "23/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 230.0,
+          "US 2YC PNW": 241.0
+        }
+      },
+      {
+        "date": "22/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 230.0,
+          "US 2YC PNW": 240.0
+        }
+      },
+      {
+        "date": "21/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 225.0,
+          "US 2YC PNW": 234.0
+        }
+      },
+      {
+        "date": "20/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 223.0,
+          "US 2YC PNW": 233.0
+        }
+      },
+      {
+        "date": "17/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 222.0,
+          "US 2YC PNW": 232.0
+        }
+      },
+      {
+        "date": "16/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 220.0,
+          "US 2YC PNW": 229.0
+        }
+      }
+    ]
+  },
+  "Barley": {
+    "sub_commodities": [
+      "EU (France), Feed Rouen"
+    ],
+    "daily_prices": [
+      {
+        "date": "29/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 240.0
+        }
+      },
+      {
+        "date": "28/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 240.0
+        }
+      },
+      {
+        "date": "27/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 247.0
+        }
+      },
+      {
+        "date": "24/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 255.0
+        }
+      },
+      {
+        "date": "23/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 255.0
+        }
+      },
+      {
+        "date": "22/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 257.0
+        }
+      },
+      {
+        "date": "21/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 246.0
+        }
+      },
+      {
+        "date": "20/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 246.0
+        }
+      },
+      {
+        "date": "17/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 245.0
+        }
+      },
+      {
+        "date": "16/07/2026",
+        "prices": {
+          "EU (France), Feed Rouen": 242.0
+        }
+      }
+    ]
+  },
+  "Soyabeans": {
+    "sub_commodities": [
+      "Brazil, Paranagua",
+      "US 2Y, Gulf"
+    ],
+    "daily_prices": [
+      {
+        "date": "29/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 482.0,
+          "US 2Y, Gulf": 482.0
+        }
+      },
+      {
+        "date": "28/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 494.0,
+          "US 2Y, Gulf": 494.0
+        }
+      },
+      {
+        "date": "27/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 491.0,
+          "US 2Y, Gulf": 491.0
+        }
+      },
+      {
+        "date": "24/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 502.0,
+          "US 2Y, Gulf": 505.0
+        }
+      },
+      {
+        "date": "23/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 497.0,
+          "US 2Y, Gulf": 501.0
+        }
+      },
+      {
+        "date": "22/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 496.0,
+          "US 2Y, Gulf": 499.0
+        }
+      },
+      {
+        "date": "21/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 489.0,
+          "US 2Y, Gulf": 494.0
+        }
+      },
+      {
+        "date": "20/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 489.0,
+          "US 2Y, Gulf": 496.0
+        }
+      },
+      {
+        "date": "17/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 484.0,
+          "US 2Y, Gulf": 487.0
+        }
+      },
+      {
+        "date": "16/07/2026",
+        "prices": {
+          "Brazil, Paranagua": 480.0,
+          "US 2Y, Gulf": 484.0
+        }
+      }
+    ]
+  },
+  "Rice": {
+    "sub_commodities": [
+      "Thailand 5% Broken, Bangkok",
+      "Vietnam 5% Broken, Ho Chi Minh"
+    ],
+    "daily_prices": [
+      {
+        "date": "29/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 451.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 433.0
+        }
+      },
+      {
+        "date": "28/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 451.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 431.0
+        }
+      },
+      {
+        "date": "27/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 450.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 431.0
+        }
+      },
+      {
+        "date": "24/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 450.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 430.0
+        }
+      },
+      {
+        "date": "23/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 447.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 431.0
+        }
+      },
+      {
+        "date": "22/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 448.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 431.0
+        }
+      },
+      {
+        "date": "21/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 448.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 428.0
+        }
+      },
+      {
+        "date": "20/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 449.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 428.0
+        }
+      },
+      {
+        "date": "17/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 445.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 425.0
+        }
+      },
+      {
+        "date": "16/07/2026",
+        "prices": {
+          "Thailand 5% Broken, Bangkok": 445.0,
+          "Vietnam 5% Broken, Ho Chi Minh": 425.0
+        }
+      }
+    ]
+  }
+}
