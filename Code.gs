@@ -3,13 +3,14 @@
  * Website: https://www.igc.int/en/default.aspx
  * 
  * Features:
+ * - Single Persistent Master CSV Database File in Google Drive
+ * - Clean & Elegant MS Teams Notification Card (No cluttered list, with direct links)
  * - Robust Error Handling & Retries (Exponential Backoff)
  * - Automatic Failure Notifications (MS Teams & Email alerts on error)
  * - Scrapes daily prices for Wheat, Maize, Barley, Soyabeans, Rice
- * - Updates Google Sheets (Consolidated & Group Tabs)
+ * - Updates Google Sheets (Consolidated Database & Group Tabs)
  * - Detects NEW daily price dates
- * - Sends MS Teams Channel Notification with Google Drive CSV link attached
- * - Sends Email to 3 recipients with CSV file attached
+ * - Sends Email with attached CSV file
  * 
  * Author: Antigravity AI
  */
@@ -48,7 +49,6 @@ function runScraper() {
       sendEmailErrorAlert(emailRecipients, errorMsg);
     }
 
-    // Re-throw to record error in Apps Script Executions log
     throw error;
   }
 }
@@ -158,7 +158,7 @@ function executeScraper(props) {
 
   Logger.log('Total records scraped successfully: ' + allFlatData.length);
 
-  // 4. Update Google Sheets
+  // 4. Update Google Sheets (Consolidated Master Database & Group Sheets)
   updateConsolidatedSheet(ss, sheetName, allFlatData);
   updateGroupSheets(ss, allFlatData);
 
@@ -173,17 +173,17 @@ function executeScraper(props) {
   if (isNewDateDetected) {
     Logger.log('🎉 NEW DATE DETECTED! Processing notifications...');
 
-    // A. Export CSV to Google Drive
-    const csvFile = createCsvFileInDrive(allFlatData, latestDateIso);
+    // A. Update/Create Single Persistent Master CSV Database File in Google Drive
+    const csvFile = updateMasterCsvFileInDrive(ss, sheetName);
     const csvFileUrl = csvFile.getUrl();
-    Logger.log('CSV file created in Drive: ' + csvFileUrl);
+    Logger.log('Master CSV File updated in Drive: ' + csvFileUrl);
 
-    // B. Send MS Teams Notification
+    // B. Send Clean MS Teams Notification (Only Clean Message + Links, No Cluttered Items)
     if (teamsWebhookUrl && teamsWebhookUrl.trim() !== '') {
-      sendMSTeamsNotification(teamsWebhookUrl, latestDateDisplay, allFlatData, csvFileUrl, ss.getUrl());
+      sendMSTeamsNotification(teamsWebhookUrl, latestDateDisplay, csvFileUrl, ss.getUrl());
     }
 
-    // C. Send Email to Recipients
+    // C. Send Email to Recipients with attached CSV
     if (emailRecipients && emailRecipients.trim() !== '') {
       sendEmailWithAttachment(emailRecipients, latestDateDisplay, csvFile, ss.getUrl());
     }
@@ -195,6 +195,134 @@ function executeScraper(props) {
   } else {
     Logger.log('No new date detected. Current latest date (' + latestDateDisplay + ') already processed. No notifications sent.');
   }
+}
+
+/**
+ * Updates or Creates a Single Master CSV Database File in Google Drive.
+ * Keeps full historical database in a single permanent CSV file link.
+ */
+function updateMasterCsvFileInDrive(ss, sheetName) {
+  const sheet = ss.getSheetByName(sheetName);
+  const data = sheet.getDataRange().getValues();
+
+  let csvContent = '';
+  data.forEach(row => {
+    const formattedRow = row.map(cell => {
+      const cellStr = cell.toString().replace(/"/g, '""');
+      return `"${cellStr}"`;
+    });
+    csvContent += formattedRow.join(',') + '\n';
+  });
+
+  const fileName = 'IGC_Market_Data_Master.csv';
+  const blob = Utilities.newBlob(csvContent, 'text/csv', fileName);
+
+  const props = PropertiesService.getScriptProperties();
+  const folderId = props.getProperty('CSV_FOLDER_ID');
+  
+  let targetFolder;
+  if (folderId && folderId.trim() !== '') {
+    targetFolder = DriveApp.getFolderById(folderId.trim());
+  } else {
+    targetFolder = DriveApp.getRootFolder();
+  }
+
+  // Look for existing Master CSV file to overwrite content instead of creating duplicate files
+  const existingFiles = targetFolder.getFilesByName(fileName);
+  let file;
+  if (existingFiles.hasNext()) {
+    file = existingFiles.next();
+    file.setContent(csvContent);
+  } else {
+    file = targetFolder.createFile(blob);
+  }
+
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    Logger.log('Note on setSharing: ' + e.message);
+  }
+
+  return file;
+}
+
+/**
+ * Sends Clean & Elegant MS Teams Notification Card
+ */
+function sendMSTeamsNotification(webhookUrl, dateDisplay, csvUrl, sheetUrl) {
+  Logger.log('Sending MS Teams Notification...');
+
+  const cardPayload = {
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "0076D7",
+    "summary": `IGC Market Price Update (${dateDisplay})`,
+    "sections": [{
+      "activityTitle": "📢 แจ้งเตือน: อัปเดตราคาสินค้าเกษตร IGC",
+      "activitySubtitle": `ข้อมูลอัปเดตประจำวันที่: ${dateDisplay}`,
+      "text": `ระบบได้ทำการดึงข้อมูลและอัปเดตราคาสินค้าเกษตรประจำวันที่ **${dateDisplay}** เข้าสู่ฐานข้อมูลเรียบร้อยแล้ว\n\nท่านสามารถกดปุ่มด้านล่างเพื่อเข้าดูรายละเอียดราคาสินค้าทั้งหมดใน **Google Sheet** หรือเปิดดูไฟล์ **Master CSV** ได้ทันทีครับ`,
+      "markdown": true
+    }],
+    "potentialAction": [
+      {
+        "@type": "OpenUri",
+        "name": "📊 เปิด Google Sheet",
+        "targets": [{ "os": "default", "uri": sheetUrl }]
+      },
+      {
+        "@type": "OpenUri",
+        "name": "📥 เปิด/ดาวน์โหลดไฟล์ Master CSV",
+        "targets": [{ "os": "default", "uri": csvUrl }]
+      }
+    ]
+  };
+
+  const response = UrlFetchApp.fetch(webhookUrl.trim(), {
+    'method': 'post',
+    'contentType': 'application/json',
+    'payload': JSON.stringify(cardPayload),
+    'muteHttpExceptions': true
+  });
+
+  Logger.log('MS Teams Webhook Response: ' + response.getResponseCode());
+}
+
+/**
+ * Sends Email with attached CSV file to recipients
+ */
+function sendEmailWithAttachment(recipientsStr, dateDisplay, csvFile, sheetUrl) {
+  Logger.log('Sending Email with CSV attachment to: ' + recipientsStr);
+
+  const subject = `[IGC Market Update] New Commodity Prices Alert - ${dateDisplay}`;
+  
+  const bodyText = `Dear Team,\n\n` +
+    `New daily commodity market prices for ${dateDisplay} have been detected and updated from IGC.\n\n` +
+    `📎 Attached File: ${csvFile.getName()}\n` +
+    `🌐 Direct Google Drive CSV Link: ${csvFile.getUrl()}\n` +
+    `📊 Google Sheet Link: ${sheetUrl}\n\n` +
+    `Best regards,\n` +
+    `Automated IGC Market Scraper System`;
+
+  const htmlBody = `<div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">` +
+    `<h2 style="color: #1b5e20;">🌾 IGC Market Daily Price Update</h2>` +
+    `<p>New daily commodity prices for <strong>${dateDisplay}</strong> have been published.</p>` +
+    `<div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">` +
+    `<p style="margin: 5px 0;">📁 <strong>Attached File:</strong> ${csvFile.getName()}</p>` +
+    `<p style="margin: 5px 0;">🔗 <a href="${csvFile.getUrl()}" target="_blank" style="color: #1a73e8; font-weight: bold;">Download / Open Master CSV from Google Drive</a></p>` +
+    `<p style="margin: 5px 0;">📊 <a href="${sheetUrl}" target="_blank" style="color: #1a73e8; font-weight: bold;">Open Live Google Sheet</a></p>` +
+    `</div>` +
+    `<p style="font-size: 12px; color: #777;">This is an automated notification from IGC Market Scraper System.</p>` +
+    `</div>`;
+
+  MailApp.sendEmail({
+    to: recipientsStr.trim(),
+    subject: subject,
+    body: bodyText,
+    htmlBody: htmlBody,
+    attachments: [csvFile.getAs(MimeType.CSV)]
+  });
+
+  Logger.log('Email sent successfully!');
 }
 
 /**
@@ -223,22 +351,18 @@ function fetchWithRetry(url, options, maxRetries = 3) {
       }
     }
 
-    // Exponential Backoff Wait (2s, 4s, 8s...)
     const sleepMs = Math.pow(2, attempt) * 1000;
     Logger.log(`Waiting ${sleepMs / 1000}s before retrying...`);
     Utilities.sleep(sleepMs);
   }
 }
 
-/**
- * Sends Error Alert to MS Teams Channel
- */
 function sendTeamsErrorAlert(webhookUrl, errorMsg) {
   try {
     const cardPayload = {
       "@type": "MessageCard",
       "@context": "http://schema.org/extensions",
-      "themeColor": "D93025", // Red error color
+      "themeColor": "D93025",
       "summary": "❌ IGC Scraper System Error Alert",
       "sections": [{
         "activityTitle": "❌ IGC Market Scraper Execution Failed",
@@ -259,9 +383,6 @@ function sendTeamsErrorAlert(webhookUrl, errorMsg) {
   }
 }
 
-/**
- * Sends Error Alert Email to Recipients
- */
 function sendEmailErrorAlert(recipientsStr, errorMsg) {
   try {
     const subject = `[Alert] IGC Market Scraper Execution Error`;
@@ -277,9 +398,6 @@ function sendEmailErrorAlert(recipientsStr, errorMsg) {
   }
 }
 
-/**
- * Converts date strings like "29/07/2026" to ISO "2026-07-29"
- */
 function parseDateToIso(dateStr) {
   if (!dateStr) return '';
   const parts = dateStr.split('/');
@@ -309,123 +427,6 @@ function getLatestDateDisplay(allData) {
     }
   }
   return maxIso;
-}
-
-function createCsvFileInDrive(allFlatData, dateIso) {
-  let csvContent = 'Group,SubCommodity,Date,Price_USD,Updated_At\n';
-  const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-  
-  allFlatData.forEach(item => {
-    const cleanGroup = `"${item.group.replace(/"/g, '""')}"`;
-    const cleanSub = `"${item.subCommodity.replace(/"/g, '""')}"`;
-    const cleanDate = `"${item.date}"`;
-    const priceVal = item.price !== null ? item.price : '';
-    csvContent += `${cleanGroup},${cleanSub},${cleanDate},${priceVal},"${nowStr}"\n`;
-  });
-
-  const fileName = `IGC_Market_Data_${dateIso}.csv`;
-  const blob = Utilities.newBlob(csvContent, 'text/csv', fileName);
-
-  const props = PropertiesService.getScriptProperties();
-  const folderId = props.getProperty('CSV_FOLDER_ID');
-  
-  let file;
-  if (folderId && folderId.trim() !== '') {
-    const folder = DriveApp.getFolderById(folderId.trim());
-    file = folder.createFile(blob);
-  } else {
-    file = DriveApp.createFile(blob);
-  }
-
-  try {
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  } catch (e) {
-    Logger.log('Note on setSharing: ' + e.message);
-  }
-
-  return file;
-}
-
-function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheetUrl) {
-  Logger.log('Sending MS Teams Notification...');
-
-  const latestIso = parseDateToIso(dateDisplay);
-  const latestRecords = allData.filter(i => parseDateToIso(i.date) === latestIso);
-
-  let summaryText = `**🌾 IGC Commodity Prices Updated for ${dateDisplay}**\n\n`;
-  latestRecords.forEach(rec => {
-    const priceStr = rec.price !== null ? `$${rec.price}` : 'N/A';
-    summaryText += `• **[${rec.group}]** ${rec.subCommodity}: **${priceStr}**\n`;
-  });
-
-  const cardPayload = {
-    "@type": "MessageCard",
-    "@context": "http://schema.org/extensions",
-    "themeColor": "0076D7",
-    "summary": `IGC Market Price Update (${dateDisplay})`,
-    "sections": [{
-      "activityTitle": "📢 IGC Market Daily Price Alert (New Date Detected!)",
-      "activitySubtitle": `Date: ${dateDisplay}`,
-      "text": summaryText,
-      "markdown": true
-    }],
-    "potentialAction": [
-      {
-        "@type": "OpenUri",
-        "name": "📥 Download / View CSV File",
-        "targets": [{ "os": "default", "uri": csvUrl }]
-      },
-      {
-        "@type": "OpenUri",
-        "name": "📊 Open Google Sheet",
-        "targets": [{ "os": "default", "uri": sheetUrl }]
-      }
-    ]
-  };
-
-  const response = UrlFetchApp.fetch(webhookUrl.trim(), {
-    'method': 'post',
-    'contentType': 'application/json',
-    'payload': JSON.stringify(cardPayload),
-    'muteHttpExceptions': true
-  });
-
-  Logger.log('MS Teams Webhook Response: ' + response.getResponseCode());
-}
-
-function sendEmailWithAttachment(recipientsStr, dateDisplay, csvFile, sheetUrl) {
-  Logger.log('Sending Email with CSV attachment to: ' + recipientsStr);
-
-  const subject = `[IGC Market Update] New Commodity Prices Alert - ${dateDisplay}`;
-  
-  const bodyText = `Dear Team,\n\n` +
-    `New daily commodity market prices for ${dateDisplay} have been detected and updated from IGC.\n\n` +
-    `📎 Attached File: ${csvFile.getName()}\n` +
-    `🌐 Direct Google Drive CSV Link: ${csvFile.getUrl()}\n` +
-    `📊 Google Sheet Link: ${sheetUrl}\n\n` +
-    `Best regards,\n` +
-    `Automated IGC Market Scraper System`;
-
-  const htmlBody = `<div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">` +
-    `<h2 style="color: #1b5e20;">🌾 IGC Market Daily Price Update</h2>` +
-    `<p>New daily commodity prices for <strong>${dateDisplay}</strong> have been published.</p>` +
-    `<div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">` +
-    `<p style="margin: 5px 0;">📁 <strong>Attached File:</strong> ${csvFile.getName()}</p>` +
-    `<p style="margin: 5px 0;">🔗 <a href="${csvFile.getUrl()}" target="_blank" style="color: #1a73e8; font-weight: bold;">Download / Open CSV from Google Drive</a></p>` +
-    `<p style="margin: 5px 0;">📊 <a href="${sheetUrl}" target="_blank" style="color: #1a73e8; font-weight: bold;">Open Live Google Sheet</a></p>` +
-    `</div>` +
-    `<p style="font-size: 12px; color: #777;">This is an automated notification from IGC Market Scraper System.</p>` +
-    `</div>`;
-
-  MailApp.sendEmail({
-    to: recipientsStr.trim(),
-    subject: subject,
-    body: bodyText,
-    htmlBody: htmlBody,
-    attachments: [csvFile.getAs(MimeType.CSV)]
-  });
-
-  Logger.log('Email sent successfully!');
 }
 
 function parseTableData(html, groupName) {
