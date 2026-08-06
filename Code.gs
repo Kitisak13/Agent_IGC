@@ -3,6 +3,8 @@
  * Website: https://www.igc.int/en/default.aspx
  * 
  * Features:
+ * - Precise Date Parsing (Converts DD/MM/YYYY from IGC to ISO YYYY-MM-DD to avoid month/day swapping)
+ * - Clean CSV Export (Formats dates as YYYY-MM-DD without time/timezone strings)
  * - MS Teams Notification (Clean English "Commodity Group: XXX" without icons)
  * - Beautiful HTML Email Table Layout (Grouped prices without icons)
  * - Single Persistent Master CSV Database File in Google Drive
@@ -198,7 +200,131 @@ function executeScraper(props) {
 }
 
 /**
+ * Parses <table id="GridViewHiddenPrices"> using Regex and converts DD/MM/YYYY to YYYY-MM-DD
+ */
+function parseTableData(html, groupName) {
+  const tableRegex = /<table[^>]*id="GridViewHiddenPrices"[^>]*>([\s\S]*?)<\/table>/i;
+  const tableMatch = html.match(tableRegex);
+  if (!tableMatch) return [];
+
+  const tableHtml = tableMatch[1];
+  
+  const thRegex = /<th[^>]*>([\s\S]*?)<\/th>/gi;
+  const rawHeaders = [];
+  let thMatch;
+  while ((thMatch = thRegex.exec(tableHtml)) !== null) {
+    rawHeaders.push(stripHtmlTags(thMatch[1]));
+  }
+  const subCommodities = rawHeaders.slice(1);
+
+  const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  const rows = [];
+  let trMatch;
+  let isFirstRow = true;
+  while ((trMatch = trRegex.exec(tableHtml)) !== null) {
+    if (isFirstRow) {
+      isFirstRow = false;
+      continue;
+    }
+
+    const rowHtml = trMatch[1];
+    const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    const cols = [];
+    let tdMatch;
+    while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
+      cols.push(stripHtmlTags(tdMatch[1]));
+    }
+
+    if (cols.length >= 2) {
+      const rawDateStr = cols[0]; // Format from IGC HTML is DD/MM/YYYY
+      const isoDateStr = parseDateToIso(rawDateStr); // Convert to YYYY-MM-DD
+      
+      subCommodities.forEach((subComm, idx) => {
+        const rawPrice = cols[idx + 1];
+        let numPrice = null;
+        if (rawPrice && rawPrice !== '-') {
+          numPrice = parseFloat(rawPrice);
+          if (isNaN(numPrice)) numPrice = rawPrice;
+        }
+        rows.push({
+          group: groupName,
+          subCommodity: subComm,
+          date: isoDateStr, // Always store YYYY-MM-DD to avoid month/day swapping
+          price: numPrice
+        });
+      });
+    }
+  }
+
+  return rows;
+}
+
+/**
+ * Converts date strings like "04/08/2026" (DD/MM/YYYY) to ISO "2026-08-04" (YYYY-MM-DD).
+ * If already in YYYY-MM-DD format, returns as is.
+ */
+function parseDateToIso(dateStr) {
+  if (!dateStr) return '';
+  const str = dateStr.trim();
+  
+  // If already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+  
+  // If DD/MM/YYYY
+  const parts = str.split('/');
+  if (parts.length === 3) {
+    const day = parts[0].padStart(2, '0');
+    const month = parts[1].padStart(2, '0');
+    const year = parts[2];
+    return `${year}-${month}-${day}`;
+  }
+  return str;
+}
+
+function getLatestDateIso(allData) {
+  let maxIso = '';
+  allData.forEach(item => {
+    const iso = parseDateToIso(item.date);
+    if (iso > maxIso) maxIso = iso;
+  });
+  return maxIso;
+}
+
+function getLatestDateDisplay(allData) {
+  return getLatestDateIso(allData); // Returns YYYY-MM-DD
+}
+
+/**
+ * Format any cell value cleanly for CSV export without time/timezone strings for dates.
+ */
+function formatCellForCsv(cell) {
+  if (cell === null || cell === undefined) {
+    return '';
+  }
+  if (cell instanceof Date) {
+    const hrs = cell.getHours();
+    const mins = cell.getMinutes();
+    const secs = cell.getSeconds();
+    // If it's a pure date (00:00:00), format as YYYY-MM-DD
+    if (hrs === 0 && mins === 0 && secs === 0) {
+      return Utilities.formatDate(cell, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    } else {
+      return Utilities.formatDate(cell, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+    }
+  }
+  const str = cell.toString().trim();
+  // Check if string happens to be a raw DD/MM/YYYY and convert
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
+    return parseDateToIso(str);
+  }
+  return str;
+}
+
+/**
  * Updates or Creates a Single Master CSV Database File in Google Drive.
+ * Pure YYYY-MM-DD date format without time or timezone strings.
  */
 function updateMasterCsvFileInDrive(ss, sheetName) {
   const sheet = ss.getSheetByName(sheetName);
@@ -207,7 +333,7 @@ function updateMasterCsvFileInDrive(ss, sheetName) {
   let csvContent = '';
   data.forEach(row => {
     const formattedRow = row.map(cell => {
-      const cellStr = cell.toString().replace(/"/g, '""');
+      const cellStr = formatCellForCsv(cell).replace(/"/g, '""');
       return `"${cellStr}"`;
     });
     csvContent += formattedRow.join(',') + '\n';
@@ -245,7 +371,110 @@ function updateMasterCsvFileInDrive(ss, sheetName) {
 }
 
 /**
- * Sends Clean MS Teams Notification Card (No icons, English headers)
+ * Updates consolidated sheet (Group, SubCommodity, Date, Price_USD, Updated_At).
+ * Enforces YYYY-MM-DD date format in Google Sheets.
+ */
+function updateConsolidatedSheet(ss, sheetName, dataList) {
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  }
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['Group', 'SubCommodity', 'Date', 'Price_USD', 'Updated_At']);
+    sheet.getRange(1, 1, 1, 5).setFontWeight('bold').setBackground('#EFEFEF');
+  }
+
+  const existingData = sheet.getDataRange().getValues();
+  const existingMap = new Map();
+  for (let i = 1; i < existingData.length; i++) {
+    const groupVal = existingData[i][0];
+    const subVal = existingData[i][1];
+    const dateVal = formatCellForCsv(existingData[i][2]);
+    const key = `${groupVal}|${subVal}|${dateVal}`;
+    existingMap.set(key, i + 1);
+  }
+
+  const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  const rowsToAppend = [];
+
+  dataList.forEach(item => {
+    const dateIso = parseDateToIso(item.date);
+    const key = `${item.group}|${item.subCommodity}|${dateIso}`;
+    if (existingMap.has(key)) {
+      const rowIndex = existingMap.get(key);
+      sheet.getRange(rowIndex, 3).setValue(dateIso); // Ensure date format is YYYY-MM-DD
+      sheet.getRange(rowIndex, 4, 1, 2).setValues([[item.price, nowStr]]);
+    } else {
+      rowsToAppend.push([item.group, item.subCommodity, dateIso, item.price, nowStr]);
+    }
+  });
+
+  if (rowsToAppend.length > 0) {
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, rowsToAppend.length, 5).setValues(rowsToAppend);
+  }
+
+  // Format Date column (Column C / Col 3) explicitly as YYYY-MM-DD text/date
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).setNumberFormat('yyyy-MM-dd');
+  }
+
+  sheet.autoResizeColumns(1, 5);
+}
+
+/**
+ * Updates individual tabs for each commodity group (Wheat, Maize, Barley, Soyabeans, Rice).
+ */
+function updateGroupSheets(ss, dataList) {
+  const grouped = {};
+  dataList.forEach(item => {
+    if (!grouped[item.group]) grouped[item.group] = [];
+    grouped[item.group].push(item);
+  });
+
+  Object.keys(grouped).forEach(groupName => {
+    let sheet = ss.getSheetByName(groupName);
+    if (!sheet) {
+      sheet = ss.insertSheet(groupName);
+    }
+
+    const items = grouped[groupName];
+    const subComms = [...new Set(items.map(i => i.subCommodity))];
+    const dates = [...new Set(items.map(i => parseDateToIso(i.date)))];
+
+    const headerRow = ['Date', ...subComms, 'Updated_At'];
+    const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+
+    const priceMap = {};
+    items.forEach(i => {
+      const isoD = parseDateToIso(i.date);
+      priceMap[`${isoD}|${i.subCommodity}`] = i.price;
+    });
+
+    const matrixRows = dates.map(d => {
+      const row = [d];
+      subComms.forEach(sc => {
+        const val = priceMap[`${d}|${sc}`];
+        row.push(val !== undefined ? val : '');
+      });
+      row.push(nowStr);
+      return row;
+    });
+
+    sheet.clear();
+    sheet.appendRow(headerRow);
+    sheet.getRange(1, 1, 1, headerRow.length).setFontWeight('bold').setBackground('#D9EAD3');
+    if (matrixRows.length > 0) {
+      sheet.getRange(2, 1, matrixRows.length, headerRow.length).setValues(matrixRows);
+      sheet.getRange(2, 1, matrixRows.length, 1).setNumberFormat('yyyy-MM-dd');
+    }
+    sheet.autoResizeColumns(1, headerRow.length);
+  });
+}
+
+/**
+ * Sends Clean MS Teams Notification Card
  */
 function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheetUrl) {
   Logger.log('Sending MS Teams Notification...');
@@ -253,7 +482,6 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
   const latestIso = parseDateToIso(dateDisplay);
   const latestRecords = allData.filter(i => parseDateToIso(i.date) === latestIso);
 
-  // Group latest records by Group Name
   const grouped = {};
   latestRecords.forEach(rec => {
     if (!grouped[rec.group]) grouped[rec.group] = [];
@@ -269,7 +497,6 @@ function sendMSTeamsNotification(webhookUrl, dateDisplay, allData, csvUrl, sheet
     }
   ];
 
-  // Add a section with English Header "Commodity Group: XXX" and no icons
   Object.keys(grouped).forEach(groupName => {
     const items = grouped[groupName];
     
@@ -327,7 +554,6 @@ function sendEmailWithAttachment(recipientsStr, dateDisplay, allData, csvFile, s
   const latestIso = parseDateToIso(dateDisplay);
   const latestRecords = allData.filter(i => parseDateToIso(i.date) === latestIso);
 
-  // Build HTML Table Rows
   let tableRowsHtml = '';
   latestRecords.forEach((rec, idx) => {
     const bg = idx % 2 === 0 ? '#ffffff' : '#f9f9f9';
@@ -457,175 +683,6 @@ function sendEmailErrorAlert(recipientsStr, errorMsg) {
   } catch (e) {
     Logger.log('Failed to send Email Error Alert: ' + e.message);
   }
-}
-
-function parseDateToIso(dateStr) {
-  if (!dateStr) return '';
-  const parts = dateStr.split('/');
-  if (parts.length === 3) {
-    const day = parts[0].padStart(2, '0');
-    const month = parts[1].padStart(2, '0');
-    const year = parts[2];
-    return `${year}-${month}-${day}`;
-  }
-  return dateStr;
-}
-
-function getLatestDateIso(allData) {
-  let maxIso = '';
-  allData.forEach(item => {
-    const iso = parseDateToIso(item.date);
-    if (iso > maxIso) maxIso = iso;
-  });
-  return maxIso;
-}
-
-function getLatestDateDisplay(allData) {
-  const maxIso = getLatestDateIso(allData);
-  for (let item of allData) {
-    if (parseDateToIso(item.date) === maxIso) {
-      return item.date;
-    }
-  }
-  return maxIso;
-}
-
-function parseTableData(html, groupName) {
-  const tableRegex = /<table[^>]*id="GridViewHiddenPrices"[^>]*>([\s\S]*?)<\/table>/i;
-  const tableMatch = html.match(tableRegex);
-  if (!tableMatch) return [];
-
-  const tableHtml = tableMatch[1];
-  
-  const thRegex = /<th[^>]*>([\s\S]*?)<\/th>/gi;
-  const rawHeaders = [];
-  let thMatch;
-  while ((thMatch = thRegex.exec(tableHtml)) !== null) {
-    rawHeaders.push(stripHtmlTags(thMatch[1]));
-  }
-  const subCommodities = rawHeaders.slice(1);
-
-  const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  const rows = [];
-  let trMatch;
-  let isFirstRow = true;
-  while ((trMatch = trRegex.exec(tableHtml)) !== null) {
-    if (isFirstRow) {
-      isFirstRow = false;
-      continue;
-    }
-
-    const rowHtml = trMatch[1];
-    const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-    const cols = [];
-    let tdMatch;
-    while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
-      cols.push(stripHtmlTags(tdMatch[1]));
-    }
-
-    if (cols.length >= 2) {
-      const dateVal = cols[0];
-      subCommodities.forEach((subComm, idx) => {
-        const rawPrice = cols[idx + 1];
-        let numPrice = null;
-        if (rawPrice && rawPrice !== '-') {
-          numPrice = parseFloat(rawPrice);
-          if (isNaN(numPrice)) numPrice = rawPrice;
-        }
-        rows.push({
-          group: groupName,
-          subCommodity: subComm,
-          date: dateVal,
-          price: numPrice
-        });
-      });
-    }
-  }
-
-  return rows;
-}
-
-function updateConsolidatedSheet(ss, sheetName, dataList) {
-  let sheet = ss.getSheetByName(sheetName);
-  if (!sheet) {
-    sheet = ss.insertSheet(sheetName);
-  }
-
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(['Group', 'SubCommodity', 'Date', 'Price_USD', 'Updated_At']);
-    sheet.getRange(1, 1, 1, 5).setFontWeight('bold').setBackground('#EFEFEF');
-  }
-
-  const existingData = sheet.getDataRange().getValues();
-  const existingMap = new Map();
-  for (let i = 1; i < existingData.length; i++) {
-    const key = `${existingData[i][0]}|${existingData[i][1]}|${existingData[i][2]}`;
-    existingMap.set(key, i + 1);
-  }
-
-  const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-  const rowsToAppend = [];
-
-  dataList.forEach(item => {
-    const key = `${item.group}|${item.subCommodity}|${item.date}`;
-    if (existingMap.has(key)) {
-      const rowIndex = existingMap.get(key);
-      sheet.getRange(rowIndex, 4, 1, 2).setValues([[item.price, nowStr]]);
-    } else {
-      rowsToAppend.push([item.group, item.subCommodity, item.date, item.price, nowStr]);
-    }
-  });
-
-  if (rowsToAppend.length > 0) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAppend.length, 5).setValues(rowsToAppend);
-  }
-
-  sheet.autoResizeColumns(1, 5);
-}
-
-function updateGroupSheets(ss, dataList) {
-  const grouped = {};
-  dataList.forEach(item => {
-    if (!grouped[item.group]) grouped[item.group] = [];
-    grouped[item.group].push(item);
-  });
-
-  Object.keys(grouped).forEach(groupName => {
-    let sheet = ss.getSheetByName(groupName);
-    if (!sheet) {
-      sheet = ss.insertSheet(groupName);
-    }
-
-    const items = grouped[groupName];
-    const subComms = [...new Set(items.map(i => i.subCommodity))];
-    const dates = [...new Set(items.map(i => i.date))];
-
-    const headerRow = ['Date', ...subComms, 'Updated_At'];
-    const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-
-    const priceMap = {};
-    items.forEach(i => {
-      priceMap[`${i.date}|${i.subCommodity}`] = i.price;
-    });
-
-    const matrixRows = dates.map(d => {
-      const row = [d];
-      subComms.forEach(sc => {
-        const val = priceMap[`${d}|${sc}`];
-        row.push(val !== undefined ? val : '');
-      });
-      row.push(nowStr);
-      return row;
-    });
-
-    sheet.clear();
-    sheet.appendRow(headerRow);
-    sheet.getRange(1, 1, 1, headerRow.length).setFontWeight('bold').setBackground('#D9EAD3');
-    if (matrixRows.length > 0) {
-      sheet.getRange(2, 1, matrixRows.length, headerRow.length).setValues(matrixRows);
-    }
-    sheet.autoResizeColumns(1, headerRow.length);
-  });
 }
 
 function extractHiddenInput(name, html) {

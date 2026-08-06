@@ -3,6 +3,7 @@ IGC Market at a Glance Web Scraper
 Website: https://www.igc.int/en/default.aspx
 
 Features:
+- Precise Date Parsing (Converts DD/MM/YYYY from IGC to ISO YYYY-MM-DD to avoid month/day swapping)
 - Robust Error Handling & HTTP Retries (Exponential Backoff)
 - Scrapes daily commodity price graph data for Wheat, Maize, Barley, Soyabeans, Rice
 - Exports to JSON, CSV, and multi-sheet Excel
@@ -27,6 +28,19 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
+
+def parse_date_to_iso(date_str: str) -> str:
+    """Converts date strings like '04/08/2026' (DD/MM/YYYY) to ISO '2026-08-04' (YYYY-MM-DD)."""
+    if not date_str:
+        return ""
+    s = date_str.strip()
+    parts = s.split("/")
+    if len(parts) == 3:
+        day = parts[0].zfill(2)
+        month = parts[1].zfill(2)
+        year = parts[2]
+        return f"{year}-{month}-{day}"
+    return s
 
 class IGCScraper:
     BASE_URL = "https://www.igc.int/en/default.aspx"
@@ -113,7 +127,9 @@ class IGCScraper:
                 daily_records = []
 
                 for row in rows:
-                    date_str = row[0]
+                    raw_date_str = row[0]
+                    iso_date_str = parse_date_to_iso(raw_date_str) # Convert DD/MM/YYYY to YYYY-MM-DD
+                    
                     prices = {}
                     for idx, comm in enumerate(sub_commodities):
                         val_str = row[idx + 1] if idx + 1 < len(row) else None
@@ -124,7 +140,7 @@ class IGCScraper:
                         prices[comm] = val_num
 
                     daily_records.append({
-                        "date": date_str,
+                        "date": iso_date_str,
                         "prices": prices
                     })
 
@@ -136,7 +152,6 @@ class IGCScraper:
 
             except Exception as e:
                 logging.error(f"Error scraping group {group_name}: {e}")
-                # Continue scraping other groups even if one group fails
 
         if not result_data:
             raise RuntimeError("Scraper completed but 0 commodity groups were scraped successfully.")
